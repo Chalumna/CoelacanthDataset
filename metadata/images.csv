@@ -1,0 +1,4 @@
+image_id,filename,species,live_status,source_url,creator,license,license_url,rights_verified,sha256
+COEL-000001,COEL-000001.png,Latimeria Chalumnae,alive,"https://commons.wikimedia.org/wiki/File:Coelacanth_off_Pumula_on_the_KwaZulu-Natal_South_Coast,_South_Africa,_on_22_November_2019.png",Bruce Henderson,CC BY 4.0,https://creativecommons.org/licenses/by/4.0/,REPLACE_WITH_BOOL,REPLACE_WITH_SHA256
+COEL-000002,COEL-000002.png,Latimeria Chalumnae,alive,https://www.inaturalist.org/photos/242640271,wrecklessmarine,CC BY-NC 4.0,https://creativecommons.org/licenses/by-nc/4.0/,REPLACE_WITH_BOOL,REPLACE_WITH_SHA256
+COEL-000003,COEL-000003.png,Latimeria Chalumnae,alive,https://www.inaturalist.org/photos/242640282,wrecklessmarine,CC BY-NC 4.0,https://creativecommons.org/licenses/by-nc/4.0/,REPLACE_WITH_BOOL,REPLACE_WITH_SHA256

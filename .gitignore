@@ -1,0 +1,85 @@
+
+# ==============================
+# macOS
+# ==============================
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100/
+.Trashes/
+.fseventsd/
+.DocumentRevisions-V100/
+
+# ==============================
+# Editors and IDEs
+# ==============================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ==============================
+# Python
+# ==============================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# ==============================
+# Temporary files and logs
+# ==============================
+*.tmp
+*.temp
+*.log
+*.bak
+*.orig
+*.out
+
+# ==============================
+# Local configuration and secrets
+# ==============================
+.env
+.env.*
+!.env.example
+
+# ==============================
+# Dataset processing artifacts
+# ==============================
+.cache/
+.cache-*/
+tmp/
+temp/
+staging/
+
+# Downloaded archives (keep curated files, not raw archives)
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+
+# ==============================
+# Local data exports
+# ==============================
+# Uncomment only if these folders are for local-only data:
+# data/raw/
+# data/working/
+
+# ==============================
+# OS / tooling
+# ==============================
+Thumbs.db
