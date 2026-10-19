@@ -2,6 +2,8 @@
 # ! Local files only !
 # ==============================
 /local-only/
+/data/local-only/
+/raw/
 
 # ==============================
 # macOS
@@ -34,6 +36,7 @@ __pycache__/
 .eggs/
 dist/
 build/
+*.bak
 
 # Virtual environments
 .venv/
