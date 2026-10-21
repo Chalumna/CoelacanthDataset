@@ -37,6 +37,7 @@ Images in `data/with-conditions/` may be redistributed only under the terms appl
 | `data/with-conditions/COEL-000005.webp` | Alexis Chappuis | [source](https://www.nature.com/articles/s41598-025-90287-7/figures/1) | [CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/) | Attribution; Non-commercial use only; No derivatives: keep unmodified | 2026-10-17 |
 | `data/with-conditions/COEL-000006.webp` | Alexis Chappuis | [source](https://www.nature.com/articles/s41598-025-90287-7/figures/2) | [CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/) | Attribution; Non-commercial use only; No derivatives: keep unmodified | 2026-10-17 |
 | `data/with-conditions/COEL-000007.webp` | Alexis Chappuis | [source](https://www.nature.com/articles/s41598-025-90287-7/figures/3) | [CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/) | Attribution; Non-commercial use only; No derivatives: keep unmodified | 2026-10-17 |
+| `data/with-conditions/`: COEL-000076 (1 item, .jpg), taken from COEL-000004 (COEL-000004.mp4) | Sakaue et al. | [source](https://www.frontiersin.org/journals/marine-science/articles/10.3389/fmars.2021.755275/full#supplementaryMaterial) | [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) | Attribution; Non-commercial use only; Changes: frames extracted from COEL-000004.mp4 | 2026-10-17 |
 <!-- END GENERATED:with-conditions -->
 
 For Creative Commons images, provide the exact licence version and a link to its legal code. Record any modifications where required.
@@ -109,5 +110,7 @@ Some images are listed in `metadata/images.csv` with `availability` set to `loca
 Images without a coelacanth (`NEG-` identifiers, listed in `metadata/negatives.csv`) follow the same availability and licence rules as the rest of the collection. Most are frames taken from a video that also contains shots with a coelacanth, so that models can learn what the same scene looks like without one.
 
 <!-- BEGIN GENERATED:negatives -->
-_None yet._
+| Files | Creator | Licence | Source | Required conditions |
+|---|---|---|---|---|
+| `data/with-conditions/`: NEG-000001 to NEG-000022 (22 items, .jpg), taken from COEL-000004 (COEL-000004.mp4) | Sakaue et al. | [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) | [source](https://www.frontiersin.org/journals/marine-science/articles/10.3389/fmars.2021.755275/full#supplementaryMaterial) | Attribution; Non-commercial use only; Changes: frames extracted from COEL-000004.mp4 |
 <!-- END GENERATED:negatives -->
