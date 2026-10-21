@@ -9,12 +9,14 @@ or in CI. Warnings never fail the check.
 
 What is checked
 ---------------
-* metadata/images.csv: exact header, well-formed rows, unique COEL ids,
-  filenames, allowed values, licence/licence_url consistency;
+* metadata/images.csv (COEL-) and metadata/negatives.csv (NEG-, optional):
+  exact header, well-formed rows, unique ids, filenames, allowed values,
+  licence / licence_url consistency, parent_id references;
 * availability rules: public -> CC0 / public domain only; public_with_conditions
   -> verified rights, source and creator; ND images must be unmodified;
 * files: every public file exists in the folder matching its availability,
   no orphan file, sha256 matches (placeholders can be filled with --fix-hashes);
+* metadata/LICENSES.md is up to date (see scripts/build_licenses.py);
 * Git: nothing from data/local-only/, raw/ or staging/ is tracked, those
   folders are ignored, and local_only files never appeared in the history.
 """
@@ -32,7 +34,10 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
 IMAGES_CSV = ROOT / "metadata" / "images.csv"
+NEGATIVES_CSV = ROOT / "metadata" / "negatives.csv"
 
 FOLDERS = {
     "public": ROOT / "data" / "unrestricted",
@@ -44,12 +49,16 @@ COLUMNS = [
     "license", "license_url", "rights_verified", "sha256", "source_group",
     "parent_id", "verified_on", "modifications", "availability",
 ]
+NEG_COLUMNS = [
+    "image_id", "filename", "source_url", "creator", "license", "license_url",
+    "rights_verified", "sha256", "source_group", "parent_id", "verified_on",
+    "modifications", "availability", "description",
+]
 PLACEHOLDER_HASH = "REPLACE_WITH_SHA256"
 SPECIES = {"Latimeria chalumnae", "Latimeria menadoensis"}
 LIVE_STATUS = {"live"}
-ID_RE = re.compile(r"^COEL-\d{6}$")
-FILE_RE = re.compile(r"^(COEL-\d{6})\.[A-Za-z0-9]+$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+ID_RES = {"positive": re.compile(r"^COEL-\d{6}$"), "negative": re.compile(r"^NEG-\d{6}$")}
 IGNORED_FILES = {".DS_Store", ".gitkeep"}
 
 
@@ -90,58 +99,71 @@ def is_public_domain(name: str) -> bool:
     return s.startswith("CC0") or s.startswith("PUBLIC DOMAIN")
 
 
-def read_rows(report: Report):
-    if not IMAGES_CSV.exists():
-        report.error("metadata/images.csv not found")
-        return None
-    with open(IMAGES_CSV, newline="", encoding="utf-8-sig") as f:
+def read_rows(path: Path, columns, report: Report, required: bool):
+    if not path.exists():
+        if required:
+            report.error(f"{path.relative_to(ROOT)} not found")
+        return None if required else []
+    name = path.relative_to(ROOT)
+    with open(path, newline="", encoding="utf-8-sig") as f:
         reader = csv.reader(f)
         header = next(reader, None)
-        if header != COLUMNS:
-            missing = [c for c in COLUMNS if c not in (header or [])]
-            extra = [c for c in (header or []) if c not in COLUMNS]
-            report.error(f"images.csv header differs from the expected schema "
-                         f"(missing: {missing or 'none'}, unexpected: {extra or 'none'}, "
-                         f"or wrong order)")
+        if header != columns:
+            missing = [c for c in columns if c not in (header or [])]
+            extra = [c for c in (header or []) if c not in columns]
+            report.error(f"{name}: header differs from the expected schema "
+                         f"(missing: {missing or 'none'}, unexpected: {extra or 'none'}, or wrong order)")
             return None
         rows = []
         for line_number, row in enumerate(reader, start=2):
             if not any(cell.strip() for cell in row):
-                report.warn(f"images.csv line {line_number}: blank row")
+                report.warn(f"{name} line {line_number}: blank row")
                 continue
-            if len(row) != len(COLUMNS):
-                report.error(f"images.csv line {line_number}: {len(row)} fields instead of "
-                             f"{len(COLUMNS)} (a field with a comma must be in double quotes)")
+            if len(row) != len(columns):
+                report.error(f"{name} line {line_number}: {len(row)} fields instead of "
+                             f"{len(columns)} (a field with a comma must be in double quotes)")
                 return None
-            rows.append(dict(zip(COLUMNS, row)))
+            rows.append(dict(zip(columns, row)))
     return rows
 
 
-def check_rows(rows, report: Report, fix_hashes: bool) -> bool:
+def write_rows(path: Path, columns, rows) -> None:
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=columns, lineterminator="\n")
+        writer.writeheader()
+        writer.writerows(rows)
+    shutil.copy2(path, path.with_name(path.name + ".bak"))
+    os.replace(tmp, path)
+
+
+def check_rows(rows, kind: str, image_ids: set[str], report: Report, fix_hashes: bool) -> bool:
     """Return True if some sha256 values were filled (rows modified in place)."""
-    ids = {r["image_id"] for r in rows}
     seen: set[str] = set()
     changed = False
     for r in rows:
         iid = r["image_id"]
         tag = iid or "<no id>"
-        if not ID_RE.match(iid):
-            report.error(f"{tag}: image_id must look like COEL-000001")
+        if not ID_RES[kind].match(iid):
+            report.error(f"{tag}: image_id must look like {'COEL' if kind == 'positive' else 'NEG'}-000001")
         if iid in seen:
             report.error(f"{tag}: duplicate image_id")
         seen.add(iid)
         if not r["filename"].startswith(iid + "."):
             report.error(f"{tag}: filename '{r['filename']}' does not start with the image_id")
-        if r["species"] not in SPECIES:
-            report.error(f"{tag}: species '{r['species']}' (expected one of {sorted(SPECIES)})")
-        if r["live_status"] not in LIVE_STATUS:
-            report.warn(f"{tag}: live_status '{r['live_status']}' (only {sorted(LIVE_STATUS)} expected)")
+        if kind == "positive":
+            if r["species"] not in SPECIES:
+                report.error(f"{tag}: species '{r['species']}' (expected one of {sorted(SPECIES)})")
+            if r["live_status"] not in LIVE_STATUS:
+                report.warn(f"{tag}: live_status '{r['live_status']}' (only {sorted(LIVE_STATUS)} expected)")
+        elif not r["description"].strip():
+            report.warn(f"{tag}: empty description")
         availability = r["availability"]
         if availability not in FOLDERS:
             report.error(f"{tag}: availability '{availability}' (expected one of {', '.join(FOLDERS)})")
             continue
-        if r["parent_id"] and r["parent_id"] not in ids:
-            report.error(f"{tag}: parent_id {r['parent_id']} does not exist")
+        if r["parent_id"] and r["parent_id"] not in image_ids:
+            report.error(f"{tag}: parent_id {r['parent_id']} does not exist in images.csv")
         if not r["source_group"].strip():
             report.warn(f"{tag}: empty source_group (needed to keep related images together in splits)")
         if r["verified_on"] and not DATE_RE.match(r["verified_on"]):
@@ -169,7 +191,6 @@ def check_rows(rows, report: Report, fix_hashes: bool) -> bool:
         elif lic.strip().lower() not in ("", "unverified") and slug and slug not in url.lower():
             report.warn(f"{tag}: license_url does not look like the licence '{lic}'")
 
-        # files and hashes
         path = FOLDERS[availability] / r["filename"]
         placeholder = r["sha256"].strip() in ("", PLACEHOLDER_HASH)
         if not path.exists():
@@ -192,8 +213,8 @@ def check_rows(rows, report: Report, fix_hashes: bool) -> bool:
     return changed
 
 
-def check_orphans(rows, report: Report) -> None:
-    expected = {(r["availability"], r["filename"]) for r in rows if r["availability"] in FOLDERS}
+def check_orphans(all_rows, report: Report) -> None:
+    expected = {(r["availability"], r["filename"]) for r in all_rows if r["availability"] in FOLDERS}
     for availability, folder in FOLDERS.items():
         if not folder.is_dir():
             continue
@@ -202,11 +223,25 @@ def check_orphans(rows, report: Report) -> None:
                 continue
             if (availability, path.name) not in expected:
                 elsewhere = [a for a, n in expected if n == path.name]
-                hint = f" (listed with availability '{elsewhere[0]}')" if elsewhere else " (not listed in images.csv)"
+                hint = f" (listed with availability '{elsewhere[0]}')" if elsewhere else " (not listed in a CSV)"
                 report.error(f"orphan file {path.relative_to(ROOT)}{hint}")
 
 
-def check_git(rows, report: Report) -> None:
+def check_licenses_md(report: Report) -> None:
+    try:
+        import build_licenses
+        current, new = build_licenses.expected_text()
+    except FileNotFoundError:
+        report.warn("metadata/LICENSES.md not found")
+        return
+    except ValueError as error:
+        report.warn(f"metadata/LICENSES.md: {error} (see scripts/build_licenses.py)")
+        return
+    if current != new:
+        report.warn("metadata/LICENSES.md is out of date: run python scripts/build_licenses.py")
+
+
+def check_git(all_rows, report: Report) -> None:
     if git("rev-parse", "--git-dir").returncode != 0:
         report.warn("not a Git repository: Git checks skipped")
         return
@@ -218,24 +253,14 @@ def check_git(rows, report: Report) -> None:
     for sample in ("data/local-only/x.jpg", "raw/x.mp4", "staging/x/y.jpg"):
         if git("check-ignore", "-q", sample).returncode != 0:
             report.error(f".gitignore does not ignore {sample.split('/x')[0]}/")
-    for r in rows:
-        if r["availability"] != "local_only" or not ID_RE.match(r["image_id"]):
+    for r in all_rows:
+        if r["availability"] != "local_only" or not r["image_id"]:
             continue
         out = git("log", "--all", "--format=%h %s", "--", f":(glob)**/{r['image_id']}.*").stdout.strip()
         if out:
             commits = ", ".join(line.split(" ", 1)[0] for line in out.splitlines())
             report.warn(f"{r['image_id']} is local_only but is in the Git history (commits {commits}): "
                         "deleting a file does not remove it from past commits")
-
-
-def write_rows(rows) -> None:
-    fd, tmp = tempfile.mkstemp(dir=IMAGES_CSV.parent, suffix=".tmp")
-    with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=COLUMNS, lineterminator="\n")
-        writer.writeheader()
-        writer.writerows(rows)
-    shutil.copy2(IMAGES_CSV, IMAGES_CSV.with_name(IMAGES_CSV.name + ".bak"))
-    os.replace(tmp, IMAGES_CSV)
 
 
 def main() -> None:
@@ -246,19 +271,28 @@ def main() -> None:
     args = parser.parse_args()
 
     report = Report()
-    rows = read_rows(report)
-    if rows is not None:
-        changed = check_rows(rows, report, args.fix_hashes)
-        check_orphans(rows, report)
+    images = read_rows(IMAGES_CSV, COLUMNS, report, required=True)
+    negatives = read_rows(NEGATIVES_CSV, NEG_COLUMNS, report, required=False)
+    if images is not None and negatives is not None:
+        image_ids = {r["image_id"] for r in images}
+        changed_img = check_rows(images, "positive", image_ids, report, args.fix_hashes)
+        changed_neg = check_rows(negatives, "negative", image_ids, report, args.fix_hashes)
+        all_rows = images + negatives
+        check_orphans(all_rows, report)
+        check_licenses_md(report)
         if not args.no_git:
-            check_git(rows, report)
-        if changed:
-            write_rows(rows)
-            print("sha256 values filled in metadata/images.csv (previous version kept as images.csv.bak)\n")
+            check_git(all_rows, report)
+        if changed_img:
+            write_rows(IMAGES_CSV, COLUMNS, images)
+        if changed_neg:
+            write_rows(NEGATIVES_CSV, NEG_COLUMNS, negatives)
+        if changed_img or changed_neg:
+            print("sha256 values filled (previous versions kept as .bak files)\n")
         counts: dict[str, int] = {}
-        for r in rows:
+        for r in all_rows:
             counts[r["availability"]] = counts.get(r["availability"], 0) + 1
-        print("Rows: " + ", ".join(f"{n} {k}" for k, n in sorted(counts.items())) + f" (total {len(rows)})\n")
+        print("Rows: " + ", ".join(f"{n} {k}" for k, n in sorted(counts.items()))
+              + f" (total {len(all_rows)}: {len(images)} positive, {len(negatives)} negative)\n")
 
     for message in report.errors:
         print(f"ERROR   {message}")

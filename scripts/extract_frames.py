@@ -10,18 +10,27 @@ availability...) and get `parent_id` = the video's image_id.
         python scripts/extract_frames.py stage --parent COEL-000014 --count 30 --dry-run
         python scripts/extract_frames.py stage --parent COEL-000014 --count 30
 
-    2. Open staging/COEL-000014/ and DELETE the frames you do not want
-       (coelacanth not visible, cut off, blurry...).
+    2. Open staging/COEL-000014/ and sort the frames:
 
-    3. Commit what is left: frames get the next free COEL-xxxxxx numbers, are
-       moved to the folder matching the parent's `availability`
-       (public -> data/unrestricted, public_with_conditions ->
-       data/with-conditions, local_only -> data/local-only) and are appended
-       to metadata/images.csv.
+       * video where every frame shows a coelacanth: just DELETE the bad
+         frames and leave the others where they are (they are all positives);
+       * video mixing shots with and without a coelacanth: move each frame to
+         positive/ (coelacanth visible) or negative/ (no coelacanth: empty
+         scene, other fish, shark...), and DELETE the rest (title cards...).
+         As soon as one frame is in positive/ or negative/, every frame must
+         be sorted or deleted.
+
+    3. Commit what is left:
 
         python scripts/extract_frames.py commit --parent COEL-000014
 
-Staging first means rejected frames never consume an ID or touch the CSV.
+       Positives get the next free COEL-xxxxxx numbers and are appended to
+       metadata/images.csv. Negatives get NEG-xxxxxx numbers and are appended
+       to metadata/negatives.csv. Files go to the folder matching the parent's
+       `availability` (public -> data/unrestricted, public_with_conditions ->
+       data/with-conditions, local_only -> data/local-only).
+
+Staging first means rejected frames never consume an ID or touch the CSV files.
 """
 from __future__ import annotations
 
@@ -42,6 +51,7 @@ ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "raw"
 STAGING_DIR = ROOT / "staging"
 IMAGES_CSV = ROOT / "metadata" / "images.csv"
+NEGATIVES_CSV = ROOT / "metadata" / "negatives.csv"
 
 # availability value -> folder holding the files
 FOLDERS = {
@@ -59,9 +69,17 @@ INHERITED = ["species", "live_status", "source_url", "creator", "license",
              "license_url", "rights_verified", "source_group", "verified_on",
              "availability"]
 
+NEG_COLUMNS = [
+    "image_id", "filename", "source_url", "creator", "license", "license_url",
+    "rights_verified", "sha256", "source_group", "parent_id", "verified_on",
+    "modifications", "availability", "description",
+]
+NEG_INHERITED = ["source_url", "creator", "license", "license_url",
+                 "rights_verified", "source_group", "verified_on", "availability"]
+NEG_DESCRIPTION = "No coelacanth visible"
+
 PLACEHOLDER_HASH = "REPLACE_WITH_SHA256"
 VIDEO_EXTENSIONS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
-ID_PATTERN = re.compile(r"COEL-(\d+)")
 ID_WIDTH = 6
 FRAME_FILE = re.compile(r"^(COEL-\d+)_f(\d+)\.(jpg|png)$")
 FRAME_NOTE = re.compile(r"^Frame (\d+) ")
@@ -72,38 +90,50 @@ def fail(message: str):
 
 
 # --------------------------------------------------------------------- CSV --
-def read_images():
-    if not IMAGES_CSV.exists():
-        fail(f"{IMAGES_CSV} not found")
-    with open(IMAGES_CSV, newline="", encoding="utf-8-sig") as f:
+def read_csv(path: Path, columns, required: bool = True):
+    if not path.exists():
+        if required:
+            fail(f"{path} not found")
+        return []
+    with open(path, newline="", encoding="utf-8-sig") as f:
         reader = csv.reader(f)
         header = next(reader, None)
-        if header != COLUMNS:
-            missing = [c for c in COLUMNS if c not in (header or [])]
-            extra = [c for c in (header or []) if c not in COLUMNS]
-            fail(f"images.csv header differs from the expected schema "
+        if header != columns:
+            missing = [c for c in columns if c not in (header or [])]
+            extra = [c for c in (header or []) if c not in columns]
+            fail(f"{path.name}: header differs from the expected schema "
                  f"(missing: {missing or 'none'}, unexpected: {extra or 'none'})")
         rows = []
         for line_number, row in enumerate(reader, start=2):
             if not any(cell.strip() for cell in row):
                 continue
-            if len(row) != len(COLUMNS):
-                fail(f"images.csv, line {line_number}: expected {len(COLUMNS)} fields, "
+            if len(row) != len(columns):
+                fail(f"{path.name}, line {line_number}: expected {len(columns)} fields, "
                      f"found {len(row)}. A field containing a comma must be wrapped "
                      "in double quotes.")
-            rows.append(dict(zip(COLUMNS, row)))
+            rows.append(dict(zip(columns, row)))
     return rows
 
 
-def write_images(rows) -> None:
-    """Write atomically, keeping a .bak copy (ignored by Git) of the previous file."""
-    fd, tmp_name = tempfile.mkstemp(dir=IMAGES_CSV.parent, suffix=".tmp")
-    with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=COLUMNS, lineterminator="\n")
-        writer.writeheader()
-        writer.writerows(rows)
-    shutil.copy2(IMAGES_CSV, IMAGES_CSV.with_name(IMAGES_CSV.name + ".bak"))
-    os.replace(tmp_name, IMAGES_CSV)
+def write_csvs(tables) -> None:
+    """Write several CSV files: temp files first, then replace. Keeps .bak copies."""
+    temps = []
+    try:
+        for path, columns, rows in tables:
+            fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+            with os.fdopen(fd, "w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=columns, lineterminator="\n")
+                writer.writeheader()
+                writer.writerows(rows)
+            temps.append((path, tmp))
+    except BaseException:
+        for _, tmp in temps:
+            Path(tmp).unlink(missing_ok=True)
+        raise
+    for path, tmp in temps:
+        if path.exists():
+            shutil.copy2(path, path.with_name(path.name + ".bak"))
+        os.replace(tmp, path)
 
 
 # ------------------------------------------------------------------ helpers --
@@ -119,17 +149,18 @@ def is_placeholder(value: str) -> bool:
     return value.strip() in ("", PLACEHOLDER_HASH)
 
 
-def next_number(rows) -> int:
-    """Highest COEL number found in the CSV, in dataset folders or in raw/, plus one."""
+def next_number(prefix: str, rows) -> int:
+    """Highest <prefix>-number found in the CSV, dataset folders or raw/, plus one."""
+    pattern = re.compile(rf"{prefix}-(\d+)")
     numbers = []
     for row in rows:
-        match = ID_PATTERN.fullmatch(row["image_id"].strip())
+        match = pattern.fullmatch(row["image_id"].strip())
         if match:
             numbers.append(int(match.group(1)))
     for folder in (*FOLDERS.values(), RAW_DIR):
         if folder.is_dir():
             for path in folder.iterdir():
-                match = ID_PATTERN.match(path.stem)
+                match = pattern.match(path.stem)
                 if match:
                     numbers.append(int(match.group(1)))
     return max(numbers, default=0) + 1
@@ -187,7 +218,8 @@ def sharpness(frame) -> float:
 
 # -------------------------------------------------------------------- stage --
 def cmd_stage(args) -> None:
-    rows = read_images()
+    rows = read_csv(IMAGES_CSV, COLUMNS)
+    neg_rows = read_csv(NEGATIVES_CSV, NEG_COLUMNS, required=False)
     parent = get_parent(rows, args.parent)
     video = locate_video(parent)
     video_hash = sha256_of(video)
@@ -219,8 +251,9 @@ def cmd_stage(args) -> None:
     print(f"Video     : {total} frames at {fps:g} fps ({total / fps:.1f} s)")
     print(f"Selection : {len(indices)} candidate frames -> {stage_dir.relative_to(ROOT)}/")
     print(f"After commit: {FOLDERS[parent['availability']].relative_to(ROOT)}/ "
-          f"(availability: {parent['availability']}), starting at "
-          f"COEL-{next_number(rows):0{ID_WIDTH}d}")
+          f"(availability: {parent['availability']}), positives start at "
+          f"COEL-{next_number('COEL', rows):0{ID_WIDTH}d}, negatives at "
+          f"NEG-{next_number('NEG', neg_rows):0{ID_WIDTH}d}")
     if args.dry_run:
         print("Dry run: nothing written.")
         return
@@ -253,19 +286,53 @@ def cmd_stage(args) -> None:
         index += 1
     cap.release()
 
+    (stage_dir / "positive").mkdir(exist_ok=True)
+    (stage_dir / "negative").mkdir(exist_ok=True)
     (stage_dir / "manifest.json").write_text(json.dumps({
         "parent_id": args.parent, "video": video.name, "video_sha256": video_hash,
         "fps": fps, "total_frames": total, "format": ext,
         "jpeg_quality": args.jpeg_quality, "frames": staged,
     }, indent=2))
     print(f"Staged {len(staged)} frames." + (f" Skipped {len(skipped)} blurry ones." if skipped else ""))
-    print(f"Next: open {stage_dir.relative_to(ROOT)}/, delete the frames you do not want, then run:")
-    print(f"  python scripts/extract_frames.py commit --parent {args.parent}")
+    print(f"Next: open {stage_dir.relative_to(ROOT)}/ and delete the frames you do not want.")
+    print("If the video also has shots WITHOUT a coelacanth, move each frame to positive/ or negative/.")
+    print(f"Then run: python scripts/extract_frames.py commit --parent {args.parent}")
 
 
 # ------------------------------------------------------------------- commit --
+def collect_frames(stage_dir: Path, parent_id: str, ext: str):
+    """Return (positives, negatives) as sorted lists of (frame_index, path)."""
+    def scan(folder: Path):
+        found = []
+        if folder.is_dir():
+            for path in sorted(folder.iterdir()):
+                m = FRAME_FILE.match(path.name)
+                if path.is_file() and m and m.group(1) == parent_id and m.group(3) == ext:
+                    found.append((int(m.group(2)), path))
+        return sorted(found)
+
+    top = scan(stage_dir)
+    positives = scan(stage_dir / "positive")
+    negatives = scan(stage_dir / "negative")
+    if positives or negatives:
+        if top:
+            fail(f"{len(top)} frame(s) are still directly in {stage_dir.relative_to(ROOT)}/: "
+                 "move each one to positive/ or negative/, or delete it")
+        both = {i for i, _ in positives} & {i for i, _ in negatives}
+        if both:
+            fail(f"frames found in both positive/ and negative/: {sorted(both)}")
+        return positives, negatives
+    return top, []  # nothing sorted: every remaining frame is a positive
+
+
+def already_extracted(rows, parent_id: str) -> set[int]:
+    return {int(m.group(1)) for r in rows if r["parent_id"] == parent_id
+            and (m := FRAME_NOTE.match(r["modifications"]))}
+
+
 def cmd_commit(args) -> None:
-    rows = read_images()
+    rows = read_csv(IMAGES_CSV, COLUMNS)
+    neg_rows = read_csv(NEGATIVES_CSV, NEG_COLUMNS, required=False)
     parent = get_parent(rows, args.parent)
     stage_dir = STAGING_DIR / args.parent
     manifest_path = stage_dir / "manifest.json"
@@ -281,64 +348,80 @@ def cmd_commit(args) -> None:
         fail("the video does not match the sha256 recorded in images.csv")
 
     ext, fps, quality = manifest["format"], manifest["fps"], manifest["jpeg_quality"]
-    already = {int(m.group(1)) for r in rows if r["parent_id"] == args.parent
-               and (m := FRAME_NOTE.match(r["modifications"]))}
-    candidates = []
-    for path in sorted(stage_dir.iterdir()):
-        m = FRAME_FILE.match(path.name)
-        if m and m.group(1) == args.parent and m.group(3) == ext:
-            candidates.append((int(m.group(2)), path))
-    candidates.sort()
-    duplicates = [i for i, _ in candidates if i in already]
-    candidates = [(i, p) for i, p in candidates if i not in already]
-    if duplicates:
-        print(f"warning: frames already in the dataset are skipped: {duplicates}")
-    if not candidates:
+    positives, negatives = collect_frames(stage_dir, args.parent, ext)
+
+    done = already_extracted(rows, args.parent) | already_extracted(neg_rows, args.parent)
+    skipped = sorted({i for i, _ in positives + negatives} & done)
+    if skipped:
+        print(f"warning: frames already in the dataset are skipped: {skipped}")
+    positives = [(i, p) for i, p in positives if i not in done]
+    negatives = [(i, p) for i, p in negatives if i not in done]
+    if not positives and not negatives:
         fail("no frame left to commit")
 
     dest = FOLDERS[parent["availability"]]
-    number = next_number(rows)
+    pos_number, neg_number = next_number("COEL", rows), next_number("NEG", neg_rows)
     note_tail = (f"; saved as JPEG (quality {quality})" if ext == "jpg" else "; saved as PNG")
-    print(f"Committing {len(candidates)} frames: COEL-{number:0{ID_WIDTH}d} -> "
-          f"COEL-{number + len(candidates) - 1:0{ID_WIDTH}d} into {dest.relative_to(ROOT)}/")
+
+    if positives:
+        print(f"Positives: {len(positives)} frames, COEL-{pos_number:0{ID_WIDTH}d} -> "
+              f"COEL-{pos_number + len(positives) - 1:0{ID_WIDTH}d}")
+    if negatives:
+        print(f"Negatives: {len(negatives)} frames, NEG-{neg_number:0{ID_WIDTH}d} -> "
+              f"NEG-{neg_number + len(negatives) - 1:0{ID_WIDTH}d}")
+    print(f"Destination: {dest.relative_to(ROOT)}/")
     if args.dry_run:
         print("Dry run: nothing written.")
         return
 
     dest.mkdir(parents=True, exist_ok=True)
-    moved, new_rows = [], []
+    moved, new_pos, new_neg = [], [], []
+
+    def add(frame_index, path, prefix, number, kind):
+        image_id = f"{prefix}-{number:0{ID_WIDTH}d}"
+        target = dest / f"{image_id}.{ext}"
+        if target.exists():
+            fail(f"{target} already exists")
+        shutil.move(str(path), str(target))
+        moved.append((target, path))
+        columns, inherited = (COLUMNS, INHERITED) if kind == "positive" else (NEG_COLUMNS, NEG_INHERITED)
+        row = {c: "" for c in columns}
+        row.update({k: parent[k] for k in inherited})
+        row.update({
+            "image_id": image_id,
+            "filename": target.name,
+            "sha256": sha256_of(target),
+            "parent_id": args.parent,
+            "modifications": (f"Frame {frame_index} (t = {frame_index / fps:.3f} s) "
+                              f"taken from {parent['filename']}{note_tail}"),
+        })
+        if kind == "negative":
+            row["description"] = NEG_DESCRIPTION
+        return row
+
     try:
-        for frame_index, path in candidates:
-            image_id = f"COEL-{number:0{ID_WIDTH}d}"
-            target = dest / f"{image_id}.{ext}"
-            if target.exists():
-                fail(f"{target} already exists")
-            shutil.move(str(path), str(target))
-            moved.append((target, path))
-            row = {c: "" for c in COLUMNS}
-            row.update({k: parent[k] for k in INHERITED})
-            row.update({
-                "image_id": image_id,
-                "filename": target.name,
-                "sha256": sha256_of(target),
-                "parent_id": args.parent,
-                "modifications": (f"Frame {frame_index} (t = {frame_index / fps:.3f} s) "
-                                  f"taken from {parent['filename']}{note_tail}"),
-            })
-            new_rows.append(row)
-            number += 1
+        for frame_index, path in positives:
+            new_pos.append(add(frame_index, path, "COEL", pos_number, "positive"))
+            pos_number += 1
+        for frame_index, path in negatives:
+            new_neg.append(add(frame_index, path, "NEG", neg_number, "negative"))
+            neg_number += 1
         if is_placeholder(parent["sha256"]):
             parent["sha256"] = video_hash
             print(f"Recorded the sha256 of {parent['filename']} in images.csv")
-        write_images(rows + new_rows)
+        tables = [(IMAGES_CSV, COLUMNS, rows + new_pos)]
+        if new_neg:
+            tables.append((NEGATIVES_CSV, NEG_COLUMNS, neg_rows + new_neg))
+        write_csvs(tables)
     except BaseException:
         for target, original in moved:  # roll back: put the frames back in staging
             shutil.move(str(target), str(original))
         raise
 
     shutil.rmtree(stage_dir)
-    print(f"Done: {new_rows[0]['image_id']} -> {new_rows[-1]['image_id']} added to images.csv.")
-    print("Next: python scripts/check_repo.py, then commit.")
+    print(f"Done: {len(new_pos)} positive(s) added to images.csv"
+          + (f", {len(new_neg)} negative(s) added to negatives.csv." if new_neg else "."))
+    print("Next: python scripts/build_licenses.py, python scripts/check_repo.py, then commit.")
 
 
 # --------------------------------------------------------------------- main --
