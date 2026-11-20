@@ -20,7 +20,7 @@ The collection is intended to support several tasks, including:
 
 Images are reviewed individually before inclusion. A publicly accessible image is not necessarily free to redistribute.
 
-The repository separates images into three levels, recorded in the `availability` column of `metadata/images.csv`.
+The repository separates images into four levels, recorded in the `availability` column of `metadata/images.csv` and `metadata/negatives.csv`.
 
 ### Unrestricted collection
 
@@ -49,6 +49,14 @@ Images with unclear rights, or licences that do not permit the intended redistri
 `data/local-only/` (`availability`: `local_only`)
 
 Images whose redistribution rights are unclear, unverified or not yet confirmed are kept on the maintainer's machine and are never pushed to this repository. They are still listed in `metadata/images.csv`, so that the record of what the full collection contains is complete, but the files themselves are not part of this repository.
+
+### External negative examples
+
+`data/external/` (`availability`: `external`)
+
+Negative examples (no coelacanth) collected from large open underwater datasets by `scripts/collect_negatives.py`: [FathomNet](https://registry.opendata.aws/fathomnet/) (deep-sea and ROV imagery), [DeepFish](https://huggingface.co/datasets/Alzayats/DeepFish) (fixed cameras over coastal habitats, frames with and without fish) and [Reef Support Marine Data](https://huggingface.co/datasets/reefsupport/marine-data) (reef imagery from several open sources).
+
+Their licences are open and recorded per image, but the files are **not** stored in this repository, to keep it light: they are listed in `metadata/negatives.csv`, with their source record, processing and attribution in `metadata/negatives_external.csv`, and anyone can rebuild them with `python scripts/collect_negatives.py restore`. Records rejected after review are listed in `metadata/negatives_rejected.csv` and are never collected again.
 
 ### Frames and negative examples
 
@@ -83,7 +91,7 @@ See [metadata/LICENSES.md](metadata/LICENSES.md) for the human-readable rights r
 | `source_group` | Origin of the image: same photographer, observation, video or filming session. |
 | `parent_id` | Identifier of the file this one was derived from (frame of a video, crop of an image). |
 | `modifications` | What was changed from the original. |
-| `availability` | `public`, `public_with_conditions` or `local_only`. |
+| `availability` | `public`, `public_with_conditions`, `local_only` or `external`. |
 
 ## Scientific integrity
 
@@ -99,6 +107,8 @@ The collection is designed to support reproducible research and open-source comp
 
 When training or evaluating a model, split the data by `source_group`, not image by image: frames of the same video, or photographs from the same observation, look alike and must stay on the same side of a split.
 
+Before training a detector, run `python scripts/audit_images.py`: it compares positives and negatives on what a network can learn instead of the coelacanth (dimensions, file format, burned-in text, borders, brightness, colour). For instance, most current positives are greyscale video frames while most negatives are in colour, and the frames of COEL-000004 all carry a credit line: neutralise such differences (augmentation, cropping, masking) or the model may learn them.
+
 The presence of an image in this repository does not establish that it is suitable for every use. Users must follow the licence and any applicable conditions recorded for the specific image.
 
 The right to redistribute an image does not automatically settle every question concerning model training, privacy, other third-party rights or applicable law.
@@ -110,18 +120,24 @@ data/
   unrestricted/        public images: CC0 or public domain
   with-conditions/     public images under conditions (attribution, non-commercial...)
   local-only/          never pushed: images are only listed in the CSV
+  external/            never pushed: rebuilt from their sources by collect_negatives.py restore
 metadata/
-  images.csv           one row per image or video (COEL-)
-  negatives.csv        one row per negative example (NEG-)
-  LICENSES.md          rights register, partly generated from the CSV files
+  images.csv                one row per image or video (COEL-)
+  negatives.csv             one row per negative example (NEG-)
+  negatives_external.csv    source record, processing and attribution of external negatives
+  negatives_rejected.csv    external records rejected after review
+  LICENSES.md               rights register, partly generated from the CSV files
 scripts/
   extract_frames.py    extract frames from a video of the collection
+  collect_negatives.py collect external negative examples (FathomNet, DeepFish, Reef Support)
+  audit_images.py      compare positives and negatives, look for shortcuts
+  image_checks.py      shared checks: borders, burned-in text, perceptual hash
   check_repo.py        integrity checks
   build_licenses.py    regenerate the tables of LICENSES.md
   requirements.txt
 ```
 
-`raw/` (source videos) and `staging/` (frames waiting to be reviewed) are local working folders and are not tracked by Git.
+`raw/` (source videos), `staging/` (frames waiting to be reviewed, review sheets, audit results) and `.cache/` (downloads of collect_negatives.py) are local working folders and are not tracked by Git.
 
 ## Scripts
 
@@ -132,9 +148,20 @@ pip install -r scripts/requirements.txt
 python scripts/extract_frames.py stage --parent COEL-000014 --count 30
 python scripts/extract_frames.py commit --parent COEL-000014
 
+# collect external negatives: check the plan, try small, then the full run
+python scripts/collect_negatives.py plan
+python scripts/collect_negatives.py collect --target fathomnet=100 --target deepfish=100 --target reefsupport=100
+python scripts/collect_negatives.py collect          # defaults: 4000 / 4000 / 2000, resumable
+python scripts/collect_negatives.py review --sample 200
+python scripts/collect_negatives.py reject NEG-000123 --reason "watermark"
+python scripts/collect_negatives.py restore          # on a new machine: rebuild data/external/
+
+python scripts/audit_images.py     # shortcuts between positives and negatives
 python scripts/build_licenses.py   # regenerate metadata/LICENSES.md
 python scripts/check_repo.py       # integrity checks, run before every commit
 ```
+
+`collect_negatives.py` checks the licence of every image, its integrity (SHA-256), its size, uniform borders (cropped), burned-in text or logos (skipped), near-duplicates of any image of the collection (skipped), and spreads the selection over many dives, habitats and survey sites. Selection is deterministic for a given `--seed`. Downloads go to `.cache/negatives/` (the DeepFish archive alone is 7.1 GB; `--cache-dir` puts them on another disk). See `python scripts/collect_negatives.py --help`.
 
 ## Contributing
 

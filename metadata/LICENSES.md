@@ -4,7 +4,7 @@ This file documents the rights and reuse conditions for images included in this 
 
 The repository's code licence does not apply to the images. Each image remains subject to its own copyright status, licence and applicable conditions.
 
-> Sections 1, 2, 8 and 9 are generated from `metadata/images.csv` and `metadata/negatives.csv` by `scripts/build_licenses.py`. Do not edit those tables by hand: edit the CSV files, then run `python scripts/build_licenses.py`.
+> Sections 1, 2, 8, 9 and 10 are generated from `metadata/images.csv` and `metadata/negatives.csv` by `scripts/build_licenses.py`. Do not edit those tables by hand: edit the CSV files, then run `python scripts/build_licenses.py`.
 
 ## 1. Unrestricted collection
 
@@ -114,3 +114,24 @@ Images without a coelacanth (`NEG-` identifiers, listed in `metadata/negatives.c
 |---|---|---|---|---|
 | `data/with-conditions/`: NEG-000001 to NEG-000022 (22 items, .jpg), taken from COEL-000004 (COEL-000004.mp4) | Sakaue et al. | [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) | [source](https://www.frontiersin.org/journals/marine-science/articles/10.3389/fmars.2021.755275/full#supplementaryMaterial) | Attribution; Non-commercial use only; Changes: frames extracted from COEL-000004.mp4 |
 <!-- END GENERATED:negatives -->
+
+## 10. External negative examples
+
+Negative examples collected from open underwater datasets by `scripts/collect_negatives.py` have `availability` set to `external`. Their files are **not** stored in this repository: `python scripts/collect_negatives.py restore` downloads them again from their sources and rebuilds `data/external/`. Each image keeps its own licence and rights holder, recorded per image in `metadata/negatives.csv`, with its original record, processing and attribution in `metadata/negatives_external.csv`.
+
+- FathomNet: licences are chosen by each contributor and recorded per image. Cite Katija et al. (2022), *Scientific Reports* 12:15914, https://doi.org/10.1038/s41598-022-19939-2, and the collection citation given in the `attribution` column.
+- DeepFish: CC BY 4.0, James Cook University. Cite Saleh et al. (2020), *Scientific Reports*, https://doi.org/10.1038/s41598-020-71639-x, and the data record https://doi.org/10.25903/5f617fb6d6e0e.
+- Reef Support Marine Data: licence and attribution recorded per image by the aggregator, from its original source.
+
+Images under a NoDerivatives (ND) licence are kept byte-for-byte unmodified; other images may be cropped (uniform borders), resized and re-encoded, as recorded in the `modifications` column.
+
+<!-- BEGIN GENERATED:external -->
+| Source dataset | Licence | Items | Rights holders | Required conditions |
+|---|---|---|---|---|
+| [DeepFish](https://huggingface.co/datasets/Alzayats/DeepFish) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | 897 | Saleh et al. (2020), James Cook University | Attribution; Changes: 897 resized / re-encoded (see the modifications column) |
+| [FathomNet](https://registry.opendata.aws/fathomnet/) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) | 2 | POSCO | Attribution; Changes: 2 resized / re-encoded (see the modifications column) |
+| [FathomNet](https://registry.opendata.aws/fathomnet/) | [CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/) | 5952 | 9 rights holders (see the CSV) | Attribution; Non-commercial use only; No derivatives: keep unmodified |
+| [FathomNet](https://registry.opendata.aws/fathomnet/) | [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) | 46 | NOAA | See the licence; Changes: 46 resized / re-encoded (see the modifications column) |
+| [Reef Support Marine Data](https://huggingface.co/datasets/reefsupport/marine-data) | [Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0) | 804 | Coralscapes V2 (Apache-2.0) | See the licence; Changes: 804 resized / re-encoded (see the modifications column) |
+| [Reef Support Marine Data](https://huggingface.co/datasets/reefsupport/marine-data) | [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/) | 1196 | Reef Support annotations on XL Catlin Seaview imagery (CC-BY-3.0); SEAVIEW raw survey imagery (UQ eSpace) (CC-BY-3.0) | Attribution; Changes: 1196 resized / re-encoded (see the modifications column) |
+<!-- END GENERATED:external -->

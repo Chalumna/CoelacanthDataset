@@ -58,7 +58,9 @@ FOLDERS = {
     "public": ROOT / "data" / "unrestricted",
     "public_with_conditions": ROOT / "data" / "with-conditions",
     "local_only": ROOT / "data" / "local-only",
+    "external": ROOT / "data" / "external",
 }
+REJECTED_CSV = ROOT / "metadata" / "negatives_rejected.csv"
 
 COLUMNS = [
     "image_id", "filename", "species", "live_status", "source_url", "creator",
@@ -153,8 +155,12 @@ def next_number(prefix: str, rows) -> int:
     """Highest <prefix>-number found in the CSV, dataset folders or raw/, plus one."""
     pattern = re.compile(rf"{prefix}-(\d+)")
     numbers = []
-    for row in rows:
-        match = pattern.fullmatch(row["image_id"].strip())
+    rejected = []
+    if REJECTED_CSV.exists():  # ids of rejected images are never reused
+        with open(REJECTED_CSV, newline="", encoding="utf-8-sig") as f:
+            rejected = list(csv.DictReader(f))
+    for row in list(rows) + rejected:
+        match = pattern.fullmatch((row.get("image_id") or "").strip())
         if match:
             numbers.append(int(match.group(1)))
     for folder in (*FOLDERS.values(), RAW_DIR):

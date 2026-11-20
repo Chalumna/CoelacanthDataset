@@ -1,1 +1,8 @@
 opencv-python-headless>=4.8
+numpy>=1.24
+# collect_negatives.py
+pillow>=10.0
+pandas>=2.0
+pyarrow>=14.0
+requests>=2.31
+huggingface_hub>=0.23

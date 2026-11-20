@@ -9,10 +9,13 @@ Only the text between the markers
 
     <!-- BEGIN GENERATED:name -->  ...  <!-- END GENERATED:name -->
 
-is rewritten (blocks: unrestricted, with-conditions, local-only, negatives).
-Everything else in LICENSES.md is yours to edit. Frames extracted from a video
-are grouped on one line per parent video.
+is rewritten (blocks: unrestricted, with-conditions, local-only, negatives,
+external). Everything else in LICENSES.md is yours to edit. Frames extracted
+from a video are grouped on one line per parent video; external negatives
+(collected by scripts/collect_negatives.py) are summarised per source dataset
+and licence, their per-image details being in metadata/negatives_external.csv.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -24,14 +27,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 IMAGES_CSV = ROOT / "metadata" / "images.csv"
 NEGATIVES_CSV = ROOT / "metadata" / "negatives.csv"
+ANNEX_CSV = ROOT / "metadata" / "negatives_external.csv"
 LICENSES_MD = ROOT / "metadata" / "LICENSES.md"
 
 FOLDER_NAMES = {
     "public": "data/unrestricted",
     "public_with_conditions": "data/with-conditions",
     "local_only": "data/local-only",
+    "external": "data/external",
 }
-BLOCKS = ["unrestricted", "with-conditions", "local-only", "negatives"]
+BLOCKS = ["unrestricted", "with-conditions", "local-only", "negatives", "external"]
+DATASET_LABELS = {
+    "fathomnet": "[FathomNet](https://registry.opendata.aws/fathomnet/)",
+    "deepfish": "[DeepFish](https://huggingface.co/datasets/Alzayats/DeepFish)",
+    "reefsupport": "[Reef Support Marine Data](https://huggingface.co/datasets/reefsupport/marine-data)",
+}
 
 
 def read_rows(path: Path):
@@ -128,7 +138,7 @@ def table(header, rows) -> str:
 
 
 # ------------------------------------------------------------------ blocks --
-def render(images, negatives) -> dict[str, str]:
+def render(images, negatives, annex=()) -> dict[str, str]:
     parents = {r["image_id"]: r["filename"] for r in images}
     blocks = {}
 
@@ -159,13 +169,35 @@ def render(images, negatives) -> dict[str, str]:
 
     rows = []
     neg_parents = parents
-    for g in make_groups(negatives):
+    for g in make_groups([r for r in negatives if r["availability"] != "external"]):
         r = g[0]
         cond = "; ".join(p for p in (conditions(r["license"]), changes(g, neg_parents)) if p)
         rows.append([files_cell(g, neg_parents, True), cell(r["creator"]),
                      link(r["license"], r["license_url"]), link("source", r["source_url"]), cell(cond)])
     blocks["negatives"] = table(
         ["Files", "Creator", "Licence", "Source", "Required conditions"], rows)
+
+    dataset_of = {a["image_id"]: a["dataset"] for a in annex}
+    summary = {}
+    for r in negatives:
+        if r["availability"] != "external":
+            continue
+        key = (dataset_of.get(r["image_id"], "unknown"), r["license"], r["license_url"])
+        entry = summary.setdefault(key, {"n": 0, "creators": set(), "modified": 0})
+        entry["n"] += 1
+        entry["creators"].add(r["creator"])
+        entry["modified"] += bool(r["modifications"].strip())
+    rows = []
+    for (dataset, lic, url), e in sorted(summary.items()):
+        creators = sorted(e["creators"])
+        who = "; ".join(creators) if len(creators) <= 3 else f"{len(creators)} rights holders (see the CSV)"
+        cond = conditions(lic)
+        if e["modified"]:
+            cond += f"; Changes: {e['modified']} resized / re-encoded (see the modifications column)"
+        rows.append([DATASET_LABELS.get(dataset, cell(dataset)), link(lic, url), str(e["n"]),
+                     cell(who), cell(cond)])
+    blocks["external"] = table(["Source dataset", "Licence", "Items", "Rights holders",
+                                "Required conditions"], rows)
     return blocks
 
 
@@ -183,7 +215,8 @@ def apply_blocks(text: str, blocks: dict[str, str]) -> str:
 def expected_text() -> tuple[str, str]:
     """Return (current text, regenerated text). Raises ValueError if markers are missing."""
     current = LICENSES_MD.read_text(encoding="utf-8")
-    new = apply_blocks(current, render(read_rows(IMAGES_CSV), read_rows(NEGATIVES_CSV)))
+    new = apply_blocks(current, render(read_rows(IMAGES_CSV), read_rows(NEGATIVES_CSV),
+                                       read_rows(ANNEX_CSV)))
     return current, new
 
 

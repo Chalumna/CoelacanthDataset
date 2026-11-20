@@ -17,8 +17,13 @@ What is checked
 * files: every public file exists in the folder matching its availability,
   no orphan file, sha256 matches (placeholders can be filled with --fix-hashes);
 * metadata/LICENSES.md is up to date (see scripts/build_licenses.py);
-* Git: nothing from data/local-only/, raw/ or staging/ is tracked, those
-  folders are ignored, and local_only files never appeared in the history.
+* Git: nothing from data/local-only/, data/external/, raw/ or staging/ is
+  tracked, those folders are ignored, and local_only files never appeared in
+  the history;
+* external negatives (scripts/collect_negatives.py): every `external` row of
+  negatives.csv has its row in metadata/negatives_external.csv and the other
+  way round. Their files are not in Git: missing ones are reported once, as a
+  warning (python scripts/collect_negatives.py restore rebuilds them).
 """
 from __future__ import annotations
 
@@ -38,12 +43,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 IMAGES_CSV = ROOT / "metadata" / "images.csv"
 NEGATIVES_CSV = ROOT / "metadata" / "negatives.csv"
+ANNEX_CSV = ROOT / "metadata" / "negatives_external.csv"
 
 FOLDERS = {
     "public": ROOT / "data" / "unrestricted",
     "public_with_conditions": ROOT / "data" / "with-conditions",
     "local_only": ROOT / "data" / "local-only",
+    "external": ROOT / "data" / "external",
 }
+LOCAL_AVAILABILITY = {"local_only", "external"}  # files never pushed to Git
 COLUMNS = [
     "image_id", "filename", "species", "live_status", "source_url", "creator",
     "license", "license_url", "rights_verified", "sha256", "source_group",
@@ -54,6 +62,13 @@ NEG_COLUMNS = [
     "rights_verified", "sha256", "source_group", "parent_id", "verified_on",
     "modifications", "availability", "description",
 ]
+ANNEX_COLUMNS = [
+    "image_id", "dataset", "source_record_id", "source_path", "source_sha256",
+    "original_width", "original_height", "width", "height", "processing",
+    "category", "content", "site", "depth_m", "imaging_type", "attribution",
+    "dhash", "text_overlay", "collected_on", "collector_version",
+]
+ANNEX_DATASETS = {"fathomnet", "deepfish", "reefsupport"}
 PLACEHOLDER_HASH = "REPLACE_WITH_SHA256"
 SPECIES = {"Latimeria chalumnae", "Latimeria menadoensis"}
 LIVE_STATUS = {"live"}
@@ -66,6 +81,7 @@ class Report:
     def __init__(self) -> None:
         self.errors: list[str] = []
         self.warnings: list[str] = []
+        self.missing_external: list[str] = []
 
     def error(self, message: str) -> None:
         self.errors.append(message)
@@ -166,6 +182,8 @@ def check_rows(rows, kind: str, image_ids: set[str], report: Report, fix_hashes:
             report.error(f"{tag}: parent_id {r['parent_id']} does not exist in images.csv")
         if not r["source_group"].strip():
             report.warn(f"{tag}: empty source_group (needed to keep related images together in splits)")
+        elif r["source_group"] != r["source_group"].strip():
+            report.warn(f"{tag}: source_group '{r['source_group']}' has leading or trailing spaces")
         if r["verified_on"] and not DATE_RE.match(r["verified_on"]):
             report.error(f"{tag}: verified_on '{r['verified_on']}' is not YYYY-MM-DD")
 
@@ -193,6 +211,11 @@ def check_rows(rows, kind: str, image_ids: set[str], report: Report, fix_hashes:
 
         path = FOLDERS[availability] / r["filename"]
         placeholder = r["sha256"].strip() in ("", PLACEHOLDER_HASH)
+        if not path.exists() and availability == "external":
+            report.missing_external.append(iid)
+            if placeholder:
+                report.error(f"{tag}: sha256 is a placeholder")
+            continue
         if not path.exists():
             if availability == "local_only":
                 report.warn(f"{tag}: local file missing on this machine ({path.relative_to(ROOT)})")
@@ -227,6 +250,36 @@ def check_orphans(all_rows, report: Report) -> None:
                 report.error(f"orphan file {path.relative_to(ROOT)}{hint}")
 
 
+def check_annex(negatives, report: Report) -> None:
+    """Cross-check negatives.csv and negatives_external.csv."""
+    external = {r["image_id"] for r in negatives if r["availability"] == "external"}
+    if not ANNEX_CSV.exists():
+        if external:
+            report.error(f"{len(external)} external negatives but {ANNEX_CSV.relative_to(ROOT)} is missing")
+        return
+    annex = read_rows(ANNEX_CSV, ANNEX_COLUMNS, report, required=True)
+    if annex is None:
+        return
+    ids = [a["image_id"] for a in annex]
+    dup = sorted({i for i in ids if ids.count(i) > 1}) if len(ids) != len(set(ids)) else []
+    if dup:
+        report.error(f"{ANNEX_CSV.name}: duplicate image_id {', '.join(dup[:5])}")
+    missing = sorted(external - set(ids))
+    extra = sorted(set(ids) - external)
+    if missing:
+        report.error(f"external negatives without a row in {ANNEX_CSV.name}: {', '.join(missing[:5])}"
+                     + (f" and {len(missing) - 5} more" if len(missing) > 5 else ""))
+    if extra:
+        report.error(f"{ANNEX_CSV.name} rows that are not external negatives in negatives.csv: "
+                     f"{', '.join(extra[:5])}" + (f" and {len(extra) - 5} more" if len(extra) > 5 else ""))
+    keys = [(a["dataset"], a["source_record_id"]) for a in annex]
+    if len(keys) != len(set(keys)):
+        report.error(f"{ANNEX_CSV.name}: the same source record was collected twice")
+    for a in annex:
+        if a["dataset"] not in ANNEX_DATASETS:
+            report.error(f"{a['image_id']}: unknown dataset '{a['dataset']}' in {ANNEX_CSV.name}")
+
+
 def check_licenses_md(report: Report) -> None:
     try:
         import build_licenses
@@ -246,11 +299,11 @@ def check_git(all_rows, report: Report) -> None:
         report.warn("not a Git repository: Git checks skipped")
         return
     tracked = set(git("ls-files").stdout.splitlines())
-    for prefix in ("data/local-only/", "raw/", "staging/"):
+    for prefix in ("data/local-only/", "data/external/", "raw/", "staging/"):
         leaked = sorted(t for t in tracked if t.startswith(prefix))
         if leaked:
             report.error(f"tracked by Git but must stay local: {', '.join(leaked)}")
-    for sample in ("data/local-only/x.jpg", "raw/x.mp4", "staging/x/y.jpg"):
+    for sample in ("data/local-only/x.jpg", "data/external/x.jpg", "raw/x.mp4", "staging/x/y.jpg"):
         if git("check-ignore", "-q", sample).returncode != 0:
             report.error(f".gitignore does not ignore {sample.split('/x')[0]}/")
     for r in all_rows:
@@ -279,6 +332,11 @@ def main() -> None:
         changed_neg = check_rows(negatives, "negative", image_ids, report, args.fix_hashes)
         all_rows = images + negatives
         check_orphans(all_rows, report)
+        check_annex(negatives, report)
+        if report.missing_external:
+            n = len(report.missing_external)
+            report.warn(f"{n} external negative file(s) not on this machine (e.g. {report.missing_external[0]}): "
+                        "python scripts/collect_negatives.py restore")
         check_licenses_md(report)
         if not args.no_git:
             check_git(all_rows, report)
